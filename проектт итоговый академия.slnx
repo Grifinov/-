@@ -1,7 +1,227 @@
-<Solution>
-  <Configurations>
-    <Platform Name="x64" />
-    <Platform Name="x86" />
-  </Configurations>
-  <Project Path="проектт итоговый академия/проектт итоговый академия.vcxproj" Id="025209ae-442d-467b-bdbb-848bc8c8858b" />
-</Solution>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <random>
+#include <iomanip>
+#include <clocale>
+
+
+struct Item {
+    std::string name;
+    int expirationDay; 
+    int id;
+};
+
+
+struct Order {
+    int id;
+    std::string requiredItemName;
+    int deliveryDay;   
+    int reward;
+    bool isFulfilled = false;
+};
+
+
+class Warehouse {
+private:
+    size_t capacity; 
+    std::vector<Item> storage; 
+    int nextItemId = 1;
+
+public:
+    Warehouse(size_t cap) : capacity(cap) {}
+
+    size_t getCapacity() const { return capacity; }
+    size_t getOccupiedSpace() const { return storage.size(); }
+    const std::vector<Item>& getStorage() const { return storage; }
+
+    // Прием товара на склад
+    bool addItem(const std::string& name, int shelfLife, int currentDay) {
+        if (storage.size() >= capacity) {
+            return false; 
+        }
+        storage.push_back({ name, currentDay + shelfLife, nextItemId++ });
+        return true;
+    }
+
+    
+    int removeExpiredItems(int currentDay) {
+        int removedCount = 0;
+        
+        auto it = std::remove_if(storage.begin(), storage.end(), [currentDay, &removedCount](const Item& item) -> bool {
+            if (item.expirationDay <= currentDay) {
+                removedCount++;
+                return true;
+            }
+            return false;
+            });
+        storage.erase(it, storage.end());
+        return removedCount;
+    }
+
+    
+    bool shipItem(const std::string& name) {
+        int bestIndex = -1;
+        int minExpiration = 999999;
+
+        for (size_t i = 0; i < storage.size(); ++i) {
+            if (storage[i].name == name && storage[i].expirationDay < minExpiration) {
+                minExpiration = storage[i].expirationDay;
+                bestIndex = static_cast<int>(i); 
+            }
+        }
+
+        if (bestIndex != -1) {
+            storage.erase(storage.begin() + bestIndex);
+            return true; 
+        }
+        return false; 
+    }
+
+    void displayStatus() const {
+        std::cout << "--- Содержимое склада (" << storage.size() << "/" << capacity << ") ---\n";
+        if (storage.empty()) {
+            std::cout << "[Пусто]\n";
+            return;
+        }
+        for (const auto& item : storage) {
+            std::cout << "ID: " << item.id << " | " << item.name << " (Годен до дня: " << item.expirationDay << ")\n";
+        }
+    }
+};
+
+
+class GameEngine {
+private:
+    Warehouse warehouse;
+    std::vector<Order> activeOrders;
+    int currentDay = 1;
+    int balance = 1000;
+    int score = 0;
+    int nextOrderId = 1;
+
+    std::vector<std::string> itemPool = { "Молоко", "Йогурт", "Смартфон", "Кроссовки", "Шоколад" };
+    std::mt19937 gen{ std::random_device{}() };
+
+public:
+    GameEngine() : warehouse(5) {} 
+
+    void generateDailyEvents() {
+        std::uniform_int_distribution<> itemDist(0, static_cast<int>(itemPool.size() - 1));
+        std::uniform_int_distribution<> shelfLifeDist(2, 5); 
+        std::uniform_int_distribution<> supplyCountDist(1, 3);
+        std::uniform_int_distribution<> orderDaysDist(2, 4); 
+
+        
+        std::cout << "\n>>> На склад приехала новая поставка:\n";
+        int supplies = supplyCountDist(gen);
+        for (int i = 0; i < supplies; ++i) {
+            std::string itemName = itemPool[itemDist(gen)];
+            int shelfLife = shelfLifeDist(gen);
+
+            if (warehouse.addItem(itemName, shelfLife, currentDay)) {
+                std::cout << "+ Принят товар: " << itemName << " (Срок: " << shelfLife << " дн.)\n";
+            }
+            else {
+                std::cout << " X Склад переполнен! Товар " << itemName << " утилизирован поставщиком.\n";
+                balance -= 50; 
+            }
+        }
+
+        
+        if (currentDay % 2 == 1) { 
+            std::string orderItem = itemPool[itemDist(gen)];
+            int deliveryDay = currentDay + orderDaysDist(gen);
+            int reward = 200;
+            activeOrders.push_back({ nextOrderId++, orderItem, deliveryDay, reward });
+            std::cout << "\n[!] Новое требование от ПВЗ: Нужен товар \"" << orderItem << "\" к " << deliveryDay << "-му дню.\n";
+        }
+    }
+
+    void processEndOfDay() {
+      
+        int expired = warehouse.removeExpiredItems(currentDay);
+        if (expired > 0) {
+            std::cout << "\n[!] Списано просроченного товара: " << expired << " шт. Штраф: " << expired * 30 << " руб.\n";
+            balance -= expired * 30;
+        }
+
+        
+        std::cout << "\n>>> Время отгрузки в ПВЗ:\n";
+        for (auto& order : activeOrders) {
+            if (order.deliveryDay == currentDay && !order.isFulfilled) {
+                if (warehouse.shipItem(order.requiredItemName)) {
+                    std::cout << " V Заказ #" << order.id << " (" << order.requiredItemName << ") успешно отправлен в ПВЗ!\n";
+                    balance += order.reward;
+                    score += 10;
+                    order.isFulfilled = true;
+                }
+                else {
+                    std::cout << " X ПРОВАЛ! Заказ #" << order.id << " (" << order.requiredItemName << ") не выполнен. Нет товара!\n";
+                    balance -= order.reward / 2; 
+                    order.isFulfilled = true; 
+                }
+            }
+        }
+
+        
+        activeOrders.erase(std::remove_if(activeOrders.begin(), activeOrders.end(), [](const Order& o) -> bool {
+            return o.isFulfilled;
+            }), activeOrders.end());
+
+        currentDay++;
+    }
+
+    void showInterface() {
+        std::cout << "\n=========================================\n";
+        std::cout << " ДЕНЬ " << currentDay << " | Баланс: " << balance << " руб. | Очки: " << score << "\n";
+        std::cout << "=========================================\n";
+
+        warehouse.displayStatus();
+
+        std::cout << "\n--- Предстоящие требования ПВЗ ---\n";
+        if (activeOrders.empty()) {
+            std::cout << "Нет активных требований.\n";
+        }
+        else {
+            for (const auto& order : activeOrders) {
+                std::cout << "- Заказ #" << order.id << ": " << order.requiredItemName
+                    << " (Будет забран в день: " << order.deliveryDay << ") Награда: " << order.reward << "\n";
+            }
+        }
+    }
+
+    bool isGameOver() const {
+        return balance <= 0;
+    }
+};
+
+int main() {
+   
+    std::setlocale(LC_ALL, "Russian");
+
+    GameEngine game;
+    std::cout << "Добро пожаловать в Тайкун Склада WB/OZON!\n";
+    std::cout << "Управляйте местами, следите за сроком годности и вовремя собирайте заказы для ПВЗ.\n";
+
+    while (!game.isGameOver()) {
+        game.showInterface();
+        game.generateDailyEvents();
+
+        std::cout << "\nНажмите Enter, чтобы завершить день и перейти к следующему...";
+
+       
+        std::cin.seekg(0, std::ios::end);
+        std::cin.clear();
+        std::cin.get();
+
+        game.processEndOfDay();
+    }
+
+    std::cout << "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
+    std::cout << "ИГРА ОКОНЧЕНА! Ваш склад обанкротился.\n";
+    std::cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
+
+    return 0;
+}
